@@ -1,0 +1,72 @@
+---
+stages:
+  - build
+  - test
+  - cleanup
+  - push
+  - deploy
+
+build:
+  stage: build
+  image:
+    name: docker/compose:1.29.2
+    entrypoint: [""]
+  script:
+    - docker-compose build --no-cache
+
+test:
+  stage: test
+  image:
+    name: docker/compose:1.29.2
+    entrypoint: [""]
+  script:
+    - docker-compose
+        -p "$CI_PROJECT_NAME"_"$CI_PIPELINE_ID"
+        -f docker-compose.test.yml
+      up
+        --abort-on-container-exit
+        --exit-code-from app
+        --quiet-pull
+
+cleanup:
+  stage: cleanup
+  image:
+    name: docker/compose:1.29.2
+    entrypoint: [""]
+  script:
+    - docker-compose -p "$CI_PROJECT_NAME"_"$CI_PIPELINE_ID" -f docker-compose.test.yml down
+  when: always
+
+push:
+  stage: push
+  image:
+    name: docker/compose:1.29.2
+    entrypoint: [""]
+  before_script:
+    - echo $CI_BUILD_TOKEN | docker login -u gitlab-ci-token --password-stdin $CI_REGISTRY
+  script:
+    - docker-compose push
+  only:
+    - master
+
+deploy:
+  stage: deploy
+  image:
+    name: docker/compose:1.29.2
+    entrypoint: [""]
+  before_script:
+    - apk --update add openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan $PRODUCTION_SERVER_IP >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - ssh root@"$PRODUCTION_SERVER_IP" echo $CI_BUILD_TOKEN | docker login -u ${CI_REGISTRY_USER} --password-stdin ${CI_REGISTRY};
+    - docker-compose -H "ssh://root@$PRODUCTION_SERVER_IP" down --remove-orphans
+    - docker-compose -H "ssh://root@$PRODUCTION_SERVER_IP" pull
+    - docker-compose -H "ssh://root@$PRODUCTION_SERVER_IP" up -d
+  only:
+    - master
+...
